@@ -181,7 +181,7 @@ internal fun filterCourts(
 }
 
 @Composable
-fun ExploreScreen() {
+fun ExploreScreen(onLoginClick: () -> Unit = {}) {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedSport by rememberSaveable { mutableStateOf("Todos") }
     var selectedDay by rememberSaveable { mutableStateOf("Hoy") }
@@ -263,7 +263,7 @@ fun ExploreScreen() {
                     }
                 }
                 item {
-                    VisitorMessage()
+                    VisitorMessage(onLoginClick = onLoginClick)
                 }
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -406,7 +406,7 @@ private fun FilterRow(
 }
 
 @Composable
-private fun VisitorMessage() {
+private fun VisitorMessage(onLoginClick: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
         shape = RoundedCornerShape(18.dp)
@@ -425,13 +425,17 @@ private fun VisitorMessage() {
                 Text("i", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text("¿Navegando como visitante?", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Inicia sesión para guardar tus reservas y recibir tu pase QR.",
+                    "Inicia sesión para confirmar reservas y recibir tu pase QR.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = onLoginClick) {
+                Text("Ingresar")
             }
         }
     }

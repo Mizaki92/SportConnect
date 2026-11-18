@@ -35,6 +35,7 @@ internal data class DemoReservation(
     val status: DemoReservationStatus
 )
 
+
 internal fun canReserveSlot(
     request: ReservationRequest,
     reservations: List<DemoReservation>
