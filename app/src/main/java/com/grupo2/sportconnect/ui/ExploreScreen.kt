@@ -1,5 +1,6 @@
 package com.grupo2.sportconnect.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,7 +24,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -31,7 +31,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +48,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -59,9 +59,25 @@ internal data class Court(
     val sport: String,
     val surface: String,
     val features: String,
-    val price: String,
+    val hourlyPricePEN: Int,
+    val capacity: Int,
+    val conditions: String,
+    val scheduleByDay: Map<String, List<TimeSlot>>
+) {
     val availableDays: Set<String>
-)
+        get() = scheduleByDay
+            .filterValues { slots -> slots.any { it.availability == SlotAvailability.AVAILABLE } }
+            .keys
+}
+
+private fun sampleSlots(vararg availability: SlotAvailability): List<TimeSlot> =
+    availability.mapIndexed { index, status ->
+        TimeSlot(
+            startMinutes = (16 + index) * 60,
+            endMinutes = (17 + index) * 60,
+            availability = status
+        )
+    }
 
 internal val sampleCourts = listOf(
     Court(
@@ -71,8 +87,29 @@ internal val sampleCourts = listOf(
         sport = "Fútbol 7",
         surface = "Césped sintético",
         features = "Iluminación LED",
-        price = "S/ 40",
-        availableDays = setOf("Hoy", "Mañana", "Fin de semana")
+        hourlyPricePEN = 40,
+        capacity = 12,
+        conditions = "Reserva de la cancha completa por una franja de 60 minutos.",
+        scheduleByDay = mapOf(
+            "Hoy" to sampleSlots(
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.OCCUPIED,
+                SlotAvailability.RESERVED
+            ),
+            "Mañana" to sampleSlots(
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.RESERVED,
+                SlotAvailability.AVAILABLE
+            ),
+            "Fin de semana" to sampleSlots(
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.OCCUPIED,
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.AVAILABLE
+            )
+        )
     ),
     Court(
         name = "Losa Multiuso B",
@@ -81,8 +118,23 @@ internal val sampleCourts = listOf(
         sport = "Básquet",
         surface = "Piso de resina",
         features = "Focos LED",
-        price = "Gratis",
-        availableDays = setOf("Hoy", "Fin de semana")
+        hourlyPricePEN = 0,
+        capacity = 10,
+        conditions = "Uso gratuito sujeto a las reglas de la sede.",
+        scheduleByDay = mapOf(
+            "Hoy" to sampleSlots(
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.RESERVED
+            ),
+            "Fin de semana" to sampleSlots(
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.OCCUPIED,
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.AVAILABLE
+            )
+        )
     ),
     Court(
         name = "Cancha de tenis 1",
@@ -91,8 +143,23 @@ internal val sampleCourts = listOf(
         sport = "Tenis",
         surface = "Superficie dura",
         features = "Iluminación nocturna",
-        price = "S/ 25",
-        availableDays = setOf("Mañana")
+        hourlyPricePEN = 25,
+        capacity = 4,
+        conditions = "Reserva de la cancha completa por una franja de 60 minutos.",
+        scheduleByDay = mapOf(
+            "Mañana" to sampleSlots(
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.OCCUPIED,
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.AVAILABLE
+            ),
+            "Fin de semana" to sampleSlots(
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.AVAILABLE,
+                SlotAvailability.RESERVED,
+                SlotAvailability.AVAILABLE
+            )
+        )
     )
 )
 
@@ -119,103 +186,115 @@ fun ExploreScreen() {
     var selectedSport by rememberSaveable { mutableStateOf("Todos") }
     var selectedDay by rememberSaveable { mutableStateOf("Hoy") }
     var selectedCourt by remember { mutableStateOf<Court?>(null) }
+    var demoReservations by remember { mutableStateOf(emptyList<DemoReservation>()) }
     val sports = listOf("Todos", "Fútbol 7", "Básquet", "Tenis")
     val days = listOf("Hoy", "Mañana", "Fin de semana")
     val filteredCourts = filterCourts(sampleCourts, query, selectedSport, selectedDay)
     val colors = MaterialTheme.colorScheme
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(colors.background)
-            .safeDrawingPadding()
-            .padding(top = 8.dp)
-    ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = 16.dp,
-                top = 8.dp,
-                end = 16.dp,
-                bottom = 24.dp
-            ),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            item {
-                Header()
-            }
-            item {
-                SearchField(
-                    query = query,
-                    onQueryChange = { query = it }
-                )
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FilterRow(
-                        options = sports,
-                        selected = selectedSport,
-                        onSelect = { selectedSport = it }
-                    )
-                    FilterRow(
-                        options = days,
-                        selected = selectedDay,
-                        onSelect = { selectedDay = it }
-                    )
-                }
-            }
-            item {
-                VisitorMessage()
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = "Canchas disponibles",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.onBackground
-                    )
-                    Text(
-                        text = "${filteredCourts.size} espacios · horarios por confirmar",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
-                    )
-                }
-            }
-            if (filteredCourts.isEmpty()) {
-                item {
-                    EmptyResults()
-                }
-            } else {
-                items(filteredCourts, key = { it.name }) { court ->
-                    CourtCard(court = court, onDetails = { selectedCourt = court })
-                }
-            }
-        }
+    BackHandler(enabled = selectedCourt != null) {
+        selectedCourt = null
     }
 
-    selectedCourt?.let { court ->
-        AlertDialog(
-            onDismissRequest = { selectedCourt = null },
-            title = { Text(court.name, fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(court.venue, fontWeight = FontWeight.SemiBold)
-                    Text(court.address)
-                    Text("${court.sport} · ${court.surface}")
-                    Text("Tarifa referencial: ${court.price} / hora")
-                    Text(
-                        "Esta vista usa datos de demostración. La disponibilidad real y las reservas se conectarán al backend en otro avance.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+    if (selectedCourt != null) {
+        CourtDetailScreen(
+            court = selectedCourt!!,
+            reservations = demoReservations,
+            onBack = { selectedCourt = null },
+            onRequestReservation = { request ->
+                if (canReserveSlot(request, demoReservations)) {
+                    demoReservations = demoReservations + DemoReservation(
+                        courtName = request.court.name,
+                        date = request.date,
+                        startMinutes = request.slot.startMinutes,
+                        endMinutes = request.slot.endMinutes,
+                        amountPEN = request.court.hourlyPricePEN,
+                        status = if (request.court.hourlyPricePEN == 0) {
+                            DemoReservationStatus.CONFIRMED
+                        } else {
+                            DemoReservationStatus.PENDING_RECEIPT
+                        }
                     )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedCourt = null }) {
-                    Text("Entendido")
+                    true
+                } else {
+                    false
                 }
             }
         )
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.background)
+                .safeDrawingPadding()
+                .padding(top = 8.dp)
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 16.dp,
+                    top = 8.dp,
+                    end = 16.dp,
+                    bottom = 24.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item {
+                    Header()
+                }
+                item {
+                    SearchField(
+                        query = query,
+                        onQueryChange = { query = it }
+                    )
+                }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FilterRow(
+                            options = sports,
+                            selected = selectedSport,
+                            onSelect = { selectedSport = it }
+                        )
+                        FilterRow(
+                            options = days,
+                            selected = selectedDay,
+                            onSelect = { selectedDay = it }
+                        )
+                    }
+                }
+                item {
+                    VisitorMessage()
+                }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Canchas disponibles",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.onBackground
+                        )
+                        Text(
+                            text = "${filteredCourts.size} espacios · horarios de demostración",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                    }
+                }
+                if (filteredCourts.isEmpty()) {
+                    item {
+                        EmptyResults()
+                    }
+                } else {
+                    items(filteredCourts, key = { it.name }) { court ->
+                        CourtCard(
+                            court = court,
+                            selectedDay = selectedDay,
+                            onDetails = { selectedCourt = court }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -359,7 +438,7 @@ private fun VisitorMessage() {
 }
 
 @Composable
-private fun CourtCard(court: Court, onDetails: () -> Unit) {
+private fun CourtCard(court: Court, selectedDay: String, onDetails: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -368,7 +447,7 @@ private fun CourtCard(court: Court, onDetails: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column {
-            CourtArtwork(court = court)
+            CourtArtwork(court = court, availabilityDay = selectedDay)
             Column(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -392,7 +471,7 @@ private fun CourtCard(court: Court, onDetails: () -> Unit) {
                     DetailTag(court.features)
                 }
                 Text(
-                    text = "◷  Próximo horario sujeto a disponibilidad",
+                    text = "◷  Disponibilidad de demostración",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -400,7 +479,7 @@ private fun CourtCard(court: Court, onDetails: () -> Unit) {
                     onClick = onDetails,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Ver detalle")
+                    Text("Ver disponibilidad y reservar")
                     Spacer(Modifier.width(6.dp))
                     Text("→")
                 }
@@ -410,11 +489,15 @@ private fun CourtCard(court: Court, onDetails: () -> Unit) {
 }
 
 @Composable
-private fun CourtArtwork(court: Court) {
+internal fun CourtArtwork(
+    court: Court,
+    height: Dp = 158.dp,
+    availabilityDay: String = "Hoy"
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(158.dp)
+            .height(height)
             .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
     ) {
         Canvas(
@@ -460,8 +543,15 @@ private fun CourtArtwork(court: Court) {
             color = Color.White,
             shape = RoundedCornerShape(30.dp)
         ) {
+            val availableCount = court.scheduleByDay[availabilityDay]
+                .orEmpty()
+                .count { it.availability == SlotAvailability.AVAILABLE }
             Text(
-                "●  ${court.availableDays.size} días publicados",
+                text = if (availableCount == 0) {
+                    "●  Sin franjas libres $availabilityDay"
+                } else {
+                    "●  $availableCount franjas libres $availabilityDay"
+                },
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelSmall,
@@ -476,7 +566,11 @@ private fun CourtArtwork(court: Court) {
             shape = RoundedCornerShape(30.dp)
         ) {
             Text(
-                text = if (court.price == "Gratis") "Gratis" else "${court.price} / hora",
+                text = if (court.hourlyPricePEN == 0) {
+                    "Gratis"
+                } else {
+                    "${formatPEN(court.hourlyPricePEN)} / hora"
+                },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
@@ -487,7 +581,7 @@ private fun CourtArtwork(court: Court) {
 }
 
 @Composable
-private fun DetailTag(label: String) {
+internal fun DetailTag(label: String) {
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
         shape = RoundedCornerShape(30.dp)
