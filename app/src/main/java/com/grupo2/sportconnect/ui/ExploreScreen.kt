@@ -51,146 +51,54 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-internal data class Court(
-    val name: String,
-    val venue: String,
-    val address: String,
-    val sport: String,
-    val surface: String,
-    val features: String,
-    val hourlyPricePEN: Int,
-    val capacity: Int,
-    val conditions: String,
-    val scheduleByDay: Map<String, List<TimeSlot>>
-) {
-    val availableDays: Set<String>
-        get() = scheduleByDay
-            .filterValues { slots -> slots.any { it.availability == SlotAvailability.AVAILABLE } }
-            .keys
-}
-
-private fun sampleSlots(vararg availability: SlotAvailability): List<TimeSlot> =
-    availability.mapIndexed { index, status ->
-        TimeSlot(
-            startMinutes = (16 + index) * 60,
-            endMinutes = (17 + index) * 60,
-            availability = status
-        )
-    }
-
-internal val sampleCourts = listOf(
-    Court(
-        name = "Cancha Sintética N.° 2",
-        venue = "Complejo Los Cipreses",
-        address = "Calle Jacarandá 340 · San Isidro",
-        sport = "Fútbol 7",
-        surface = "Césped sintético",
-        features = "Iluminación LED",
-        hourlyPricePEN = 40,
-        capacity = 12,
-        conditions = "Reserva de la cancha completa por una franja de 60 minutos.",
-        scheduleByDay = mapOf(
-            "Hoy" to sampleSlots(
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.OCCUPIED,
-                SlotAvailability.RESERVED
-            ),
-            "Mañana" to sampleSlots(
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.RESERVED,
-                SlotAvailability.AVAILABLE
-            ),
-            "Fin de semana" to sampleSlots(
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.OCCUPIED,
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.AVAILABLE
-            )
-        )
-    ),
-    Court(
-        name = "Losa Multiuso B",
-        venue = "Polideportivo Central",
-        address = "Av. del Ejército 1120 · Miraflores",
-        sport = "Básquet",
-        surface = "Piso de resina",
-        features = "Focos LED",
-        hourlyPricePEN = 0,
-        capacity = 10,
-        conditions = "Uso gratuito sujeto a las reglas de la sede.",
-        scheduleByDay = mapOf(
-            "Hoy" to sampleSlots(
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.RESERVED
-            ),
-            "Fin de semana" to sampleSlots(
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.OCCUPIED,
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.AVAILABLE
-            )
-        )
-    ),
-    Court(
-        name = "Cancha de tenis 1",
-        venue = "Complejo Los Cipreses",
-        address = "Calle Jacarandá 340 · San Isidro",
-        sport = "Tenis",
-        surface = "Superficie dura",
-        features = "Iluminación nocturna",
-        hourlyPricePEN = 25,
-        capacity = 4,
-        conditions = "Reserva de la cancha completa por una franja de 60 minutos.",
-        scheduleByDay = mapOf(
-            "Mañana" to sampleSlots(
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.OCCUPIED,
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.AVAILABLE
-            ),
-            "Fin de semana" to sampleSlots(
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.AVAILABLE,
-                SlotAvailability.RESERVED,
-                SlotAvailability.AVAILABLE
-            )
-        )
-    )
-)
-
-internal fun filterCourts(
-    courts: List<Court>,
-    query: String,
-    sport: String,
-    day: String
-): List<Court> {
-    val normalizedQuery = query.trim()
-    return courts.filter { court ->
-        val matchesQuery = normalizedQuery.isEmpty() ||
-            listOf(court.name, court.venue, court.address, court.sport)
-                .any { it.contains(normalizedQuery, ignoreCase = true) }
-        val matchesSport = sport == "Todos" || court.sport == sport
-        val matchesDay = court.availableDays.contains(day)
-        matchesQuery && matchesSport && matchesDay
-    }
-}
+import com.grupo2.sportconnect.domain.model.Court
+import com.grupo2.sportconnect.domain.model.Reservation
+import com.grupo2.sportconnect.domain.model.ReservationRequest
+import com.grupo2.sportconnect.domain.model.SlotAvailability
+import com.grupo2.sportconnect.domain.model.TimeSlot
+import com.grupo2.sportconnect.domain.usecase.GetCourtsUseCase
+import com.grupo2.sportconnect.domain.usecase.GetReservationsUseCase
+import com.grupo2.sportconnect.domain.usecase.IsReservationAvailableUseCase
+import com.grupo2.sportconnect.domain.usecase.RequestReservationUseCase
+import com.grupo2.sportconnect.domain.usecase.SearchCourtsUseCase
+import com.grupo2.sportconnect.domain.repository.RepositoryException
 
 @Composable
-fun ExploreScreen(onLoginClick: () -> Unit = {}) {
+fun ExploreScreen(
+    onLoginClick: () -> Unit = {},
+    getCourts: GetCourtsUseCase,
+    getReservations: GetReservationsUseCase,
+    searchCourts: SearchCourtsUseCase,
+    isReservationAvailable: IsReservationAvailableUseCase,
+    requestReservation: RequestReservationUseCase
+) {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedSport by rememberSaveable { mutableStateOf("Todos") }
     var selectedDay by rememberSaveable { mutableStateOf("Hoy") }
     var selectedCourt by remember { mutableStateOf<Court?>(null) }
-    var demoReservations by remember { mutableStateOf(emptyList<DemoReservation>()) }
+    var demoReservations by remember { mutableStateOf(emptyList<Reservation>()) }
+    var courts by remember { mutableStateOf(emptyList<Court>()) }
+    var reservationDataAvailable by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
     val sports = listOf("Todos", "Fútbol 7", "Básquet", "Tenis")
     val days = listOf("Hoy", "Mañana", "Fin de semana")
-    val filteredCourts = filterCourts(sampleCourts, query, selectedSport, selectedDay)
+    val filteredCourts = searchCourts(courts, query, selectedSport, selectedDay)
     val colors = MaterialTheme.colorScheme
+    androidx.compose.runtime.LaunchedEffect(getCourts, getReservations) {
+        isLoading = true
+        try {
+            courts = getCourts()
+            demoReservations = getReservations()
+            reservationDataAvailable = true
+            loadError = null
+        } catch (exception: RepositoryException) {
+            reservationDataAvailable = false
+            loadError = exception.userMessage
+        } finally {
+            isLoading = false
+        }
+    }
 
     BackHandler(enabled = selectedCourt != null) {
         selectedCourt = null
@@ -200,25 +108,13 @@ fun ExploreScreen(onLoginClick: () -> Unit = {}) {
         CourtDetailScreen(
             court = selectedCourt!!,
             reservations = demoReservations,
+            reservationDataAvailable = reservationDataAvailable,
+            isReservationAvailable = isReservationAvailable,
             onBack = { selectedCourt = null },
             onRequestReservation = { request ->
-                if (canReserveSlot(request, demoReservations)) {
-                    demoReservations = demoReservations + DemoReservation(
-                        courtName = request.court.name,
-                        date = request.date,
-                        startMinutes = request.slot.startMinutes,
-                        endMinutes = request.slot.endMinutes,
-                        amountPEN = request.court.hourlyPricePEN,
-                        status = if (request.court.hourlyPricePEN == 0) {
-                            DemoReservationStatus.CONFIRMED
-                        } else {
-                            DemoReservationStatus.PENDING_RECEIPT
-                        }
-                    )
-                    true
-                } else {
-                    false
-                }
+                val created = requestReservation(request)
+                if (created) demoReservations = getReservations()
+                created
             }
         )
     } else {
@@ -265,6 +161,21 @@ fun ExploreScreen(onLoginClick: () -> Unit = {}) {
                 item {
                     VisitorMessage(onLoginClick = onLoginClick)
                 }
+                loadError?.let { error ->
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            )
+                        ) {
+                            Text(
+                                text = "No se pudieron cargar las canchas o reservas: $error",
+                                modifier = Modifier.padding(14.dp),
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
@@ -280,7 +191,15 @@ fun ExploreScreen(onLoginClick: () -> Unit = {}) {
                         )
                     }
                 }
-                if (filteredCourts.isEmpty()) {
+                if (filteredCourts.isEmpty() && loadError == null && isLoading) {
+                    item {
+                        Text(
+                            text = "Cargando disponibilidad...",
+                            color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 20.dp)
+                        )
+                    }
+                } else if (filteredCourts.isEmpty() && loadError == null) {
                     item {
                         EmptyResults()
                     }

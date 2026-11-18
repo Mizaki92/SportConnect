@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -41,6 +42,14 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
+import com.grupo2.sportconnect.domain.model.Court
+import com.grupo2.sportconnect.domain.model.Reservation
+import com.grupo2.sportconnect.domain.model.ReservationRequest
+import com.grupo2.sportconnect.domain.model.SlotAvailability
+import com.grupo2.sportconnect.domain.model.TimeSlot
+import com.grupo2.sportconnect.domain.usecase.IsReservationAvailableUseCase
+import com.grupo2.sportconnect.domain.repository.RepositoryException
+import kotlinx.coroutines.launch
 
 private data class BookingDay(
     val date: LocalDate,
@@ -51,9 +60,11 @@ private data class BookingDay(
 @Composable
 internal fun CourtDetailScreen(
     court: Court,
-    reservations: List<DemoReservation>,
+    reservations: List<Reservation>,
+    reservationDataAvailable: Boolean,
+    isReservationAvailable: IsReservationAvailableUseCase,
     onBack: () -> Unit,
-    onRequestReservation: (ReservationRequest) -> Boolean
+    onRequestReservation: suspend (ReservationRequest) -> Boolean
 ) {
     val today = androidx.compose.runtime.remember { LocalDate.now() }
     val days = listOf(
@@ -70,13 +81,16 @@ internal fun CourtDetailScreen(
     var showReviewDialog by rememberSaveable(court.name) { mutableStateOf(false) }
     var reservationMessage by rememberSaveable(court.name) { mutableStateOf<String?>(null) }
     var reservationSucceeded by rememberSaveable(court.name) { mutableStateOf(false) }
+    var isSubmitting by rememberSaveable(court.name) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val selectedDay = days[selectedDayIndex]
     val slots = court.scheduleByDay[selectedDay.scheduleKey].orEmpty()
     val selectedSlot = slots.firstOrNull { it.startMinutes == selectedStartMinutes }
     val request = selectedSlot?.let {
         ReservationRequest(court, selectedDay.scheduleKey, selectedDay.date, it)
     }
-    val selectedSlotIsAvailable = request != null && canReserveSlot(request, reservations)
+    val selectedSlotIsAvailable = reservationDataAvailable &&
+        request != null && isReservationAvailable(request, reservations)
 
     Box(
         modifier = Modifier
@@ -238,7 +252,8 @@ internal fun CourtDetailScreen(
                     }
                     slots.forEach { slot ->
                         val slotRequest = ReservationRequest(court, selectedDay.scheduleKey, selectedDay.date, slot)
-                        val canSelect = canReserveSlot(slotRequest, reservations)
+                        val canSelect = reservationDataAvailable &&
+                            isReservationAvailable(slotRequest, reservations)
                         val isSelected = selectedStartMinutes == slot.startMinutes && canSelect
                         val reservationForSlot = reservations.firstOrNull {
                             it.courtName == court.name &&
@@ -246,6 +261,7 @@ internal fun CourtDetailScreen(
                                 it.startMinutes == slot.startMinutes
                         }
                         val status = when {
+                            !reservationDataAvailable -> "Disponibilidad no disponible"
                             reservationForSlot != null -> reservationForSlot.status.label
                             slot.availability != SlotAvailability.AVAILABLE -> slot.availability.label
                             !canSelect -> "Conflicto con otra reserva"
@@ -333,7 +349,7 @@ internal fun CourtDetailScreen(
                 }
                 Button(
                     onClick = { showReviewDialog = true },
-                    enabled = selectedSlotIsAvailable,
+                    enabled = selectedSlotIsAvailable && !isSubmitting,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
@@ -374,19 +390,30 @@ internal fun CourtDetailScreen(
             },
             confirmButton = {
                 TextButton(
+                    enabled = !isSubmitting,
                     onClick = {
-                        showReviewDialog = false
-                        reservationSucceeded = onRequestReservation(request)
-                        reservationMessage = if (reservationSucceeded) {
-                            if (court.hourlyPricePEN == 0) {
-                                "Reserva confirmada en la demostración. La confirmación real requiere el backend."
-                            } else {
-                                "Solicitud registrada como pendiente de comprobante en la demostración. No se realizó ningún pago."
+                        scope.launch {
+                            isSubmitting = true
+                            showReviewDialog = false
+                            try {
+                                reservationSucceeded = onRequestReservation(request)
+                                reservationMessage = if (reservationSucceeded) {
+                                    if (court.hourlyPricePEN == 0) {
+                                        "Reserva confirmada en la demostración. La confirmación real requiere el backend."
+                                    } else {
+                                        "Solicitud registrada como pendiente de comprobante en la demostración. No se realizó ningún pago."
+                                    }
+                                } else {
+                                    "El horario ya no está disponible. Actualiza la disponibilidad e intenta con otra franja."
+                                }
+                                if (reservationSucceeded) selectedStartMinutes = null
+                            } catch (exception: RepositoryException) {
+                                reservationSucceeded = false
+                                reservationMessage = exception.userMessage
+                            } finally {
+                                isSubmitting = false
                             }
-                        } else {
-                            "El horario ya no está disponible. Actualiza la disponibilidad e intenta con otra franja."
                         }
-                        if (reservationSucceeded) selectedStartMinutes = null
                     }
                 ) {
                     Text("Solicitar reserva")

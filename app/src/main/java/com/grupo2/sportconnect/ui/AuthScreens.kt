@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,9 +51,20 @@ import androidx.compose.ui.unit.sp
 import com.grupo2.sportconnect.ui.theme.SportBackground
 import com.grupo2.sportconnect.ui.theme.SportGreen
 import com.grupo2.sportconnect.ui.theme.SportInk
+import com.grupo2.sportconnect.domain.model.AthleteRegistration
+import com.grupo2.sportconnect.domain.model.LoginResult
+import com.grupo2.sportconnect.domain.model.PasswordRecoveryRequest
+import com.grupo2.sportconnect.domain.model.RecoveryIdentifierType
+import com.grupo2.sportconnect.domain.model.RecoveryResult
+import com.grupo2.sportconnect.domain.model.RegistrationResult
+import com.grupo2.sportconnect.domain.repository.RepositoryException
+import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(
+    demoCredentialsHint: String?,
+    onLogin: suspend (String, String) -> LoginResult,
+    onLoginSuccess: () -> Unit,
     onRegister: () -> Unit,
     onRecoverPassword: () -> Unit,
     onExploreAsGuest: () -> Unit
@@ -61,6 +73,8 @@ fun LoginScreen(
     var password by rememberSaveable { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
+    var isLoading by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     AuthPage {
         Row(
@@ -75,6 +89,14 @@ fun LoginScreen(
             subtitle = "Deporte e integración comunitaria",
             description = "Inicia sesión para confirmar tu reserva, inscribirte a talleres o unirte a tu equipo deportivo barrial."
         )
+
+        demoCredentialsHint?.let {
+            AuthNotice(
+                text = it,
+                isError = false,
+                title = "Cuenta de prueba (solo memoria)"
+            )
+        }
 
         message?.let { AuthNotice(text = it, isError = true) }
 
@@ -100,11 +122,24 @@ fun LoginScreen(
             onTrailingLabelClick = onRecoverPassword
         )
 
-        PrimaryAuthButton(text = "Iniciar Sesión  →") {
-            message = when {
-                !email.isValidEmail() -> "Ingresa un correo electrónico válido."
-                password.isBlank() -> "Ingresa tu contraseña para continuar."
-                else -> "El servicio de autenticación aún no está conectado. Inténtalo más tarde."
+        PrimaryAuthButton(text = if (isLoading) "Verificando..." else "Iniciar Sesión  →") {
+            if (!isLoading) {
+                scope.launch {
+                    isLoading = true
+                    try {
+                        message = when (onLogin(email, password)) {
+                            LoginResult.AUTHENTICATED -> {
+                                onLoginSuccess()
+                                null
+                            }
+                            LoginResult.INVALID_INPUT -> "Ingresa un correo válido y tu contraseña."
+                            LoginResult.INVALID_CREDENTIALS -> "Correo o contraseña incorrectos."
+                        }
+                    } catch (exception: RepositoryException) {
+                        message = exception.userMessage
+                    }
+                    isLoading = false
+                }
             }
         }
 
@@ -130,7 +165,10 @@ fun LoginScreen(
 }
 
 @Composable
-fun RegisterScreen(onBackToLogin: () -> Unit) {
+fun RegisterScreen(
+    onRegister: suspend (AthleteRegistration) -> RegistrationResult,
+    onBackToLogin: () -> Unit
+) {
     var firstName by rememberSaveable { mutableStateOf("") }
     var lastName by rememberSaveable { mutableStateOf("") }
     var document by rememberSaveable { mutableStateOf("") }
@@ -143,6 +181,9 @@ fun RegisterScreen(onBackToLogin: () -> Unit) {
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
     var confirmationVisible by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
+    var isError by rememberSaveable { mutableStateOf(true) }
+    var isLoading by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     BackHandler(onBack = onBackToLogin)
 
@@ -255,17 +296,46 @@ fun RegisterScreen(onBackToLogin: () -> Unit) {
             )
         }
 
-        message?.let { AuthNotice(text = it, isError = true) }
-        PrimaryAuthButton(text = "Crear mi Cuenta de Deportista") {
-            message = when {
-                firstName.isBlank() || lastName.isBlank() || document.length < 8 ||
-                    phone.isBlank() || district.isBlank() -> "Completa todos los campos obligatorios."
-                !email.isValidEmail() -> "Ingresa un correo electrónico válido."
-                password.length < 8 || password.none(Char::isDigit) ->
-                    "La contraseña debe tener 8 caracteres y al menos un número."
-                confirmation != password -> "Las contraseñas no coinciden."
-                !termsAccepted -> "Debes aceptar los términos y la política de privacidad."
-                else -> "El servicio de registro aún no está conectado. Tus datos no se han enviado."
+        message?.let { AuthNotice(text = it, isError = isError) }
+        PrimaryAuthButton(
+            text = if (isLoading) "Creando cuenta..." else "Crear mi Cuenta de Deportista"
+        ) {
+            if (!isLoading) {
+                scope.launch {
+                    isLoading = true
+                    try {
+                        when (onRegister(
+                            AthleteRegistration(
+                                firstName = firstName,
+                                lastName = lastName,
+                                document = document,
+                                phone = phone,
+                                email = email,
+                                district = district,
+                                password = password,
+                                confirmation = confirmation,
+                                termsAccepted = termsAccepted
+                            )
+                        )) {
+                            RegistrationResult.CREATED -> {
+                                isError = false
+                                message = "Cuenta de demostración creada en memoria. Ya puedes iniciar sesión."
+                            }
+                            RegistrationResult.INVALID_DATA -> {
+                                isError = true
+                                message = "Revisa los campos obligatorios, el formato del correo, los requisitos de contraseña y la aceptación de términos."
+                            }
+                            RegistrationResult.EMAIL_ALREADY_REGISTERED -> {
+                                isError = true
+                                message = "Ese correo ya tiene una cuenta registrada."
+                            }
+                        }
+                    } catch (exception: RepositoryException) {
+                        isError = true
+                        message = exception.userMessage
+                    }
+                    isLoading = false
+                }
             }
         }
         Text(
@@ -282,11 +352,16 @@ fun RegisterScreen(onBackToLogin: () -> Unit) {
 }
 
 @Composable
-fun RecoveryScreen(onBackToLogin: () -> Unit) {
+fun RecoveryScreen(
+    onRequestRecovery: suspend (PasswordRecoveryRequest) -> RecoveryResult,
+    onBackToLogin: () -> Unit
+) {
     var selectedMethod by rememberSaveable { mutableStateOf("Correo Electrónico") }
     var identifier by rememberSaveable { mutableStateOf("") }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
     var requestReady by rememberSaveable { mutableStateOf(false) }
+    var isLoading by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     BackHandler(onBack = onBackToLogin)
 
@@ -393,22 +468,38 @@ fun RecoveryScreen(onBackToLogin: () -> Unit) {
         )
 
         message?.let { AuthNotice(text = it, isError = !requestReady) }
-        PrimaryAuthButton(text = "Enviar enlace de recuperación  →") {
-            val isValid = if (selectedMethod == "Correo Electrónico") {
-                identifier.isValidEmail()
-            } else {
-                identifier.length >= 8
-            }
-            if (!isValid) {
-                requestReady = false
-                message = if (selectedMethod == "Correo Electrónico") {
-                    "Ingresa un correo electrónico válido."
-                } else {
-                    "Ingresa un documento válido de al menos 8 dígitos."
+        PrimaryAuthButton(
+            text = if (isLoading) "Procesando solicitud..." else "Enviar enlace de recuperación  →"
+        ) {
+            if (!isLoading) {
+                scope.launch {
+                    isLoading = true
+                    val identifierType = if (selectedMethod == "Correo Electrónico") {
+                        RecoveryIdentifierType.EMAIL
+                    } else {
+                        RecoveryIdentifierType.DOCUMENT
+                    }
+                    try {
+                        when (onRequestRecovery(PasswordRecoveryRequest(identifierType, identifier))) {
+                            RecoveryResult.INVALID_INPUT -> {
+                                requestReady = false
+                                message = if (identifierType == RecoveryIdentifierType.EMAIL) {
+                                    "Ingresa un correo electrónico válido."
+                                } else {
+                                    "Ingresa un documento válido de al menos 8 dígitos."
+                                }
+                            }
+                            RecoveryResult.REQUEST_ACCEPTED -> {
+                                requestReady = true
+                                message = "Solicitud aceptada por el servicio de demostración. No se envió ningún correo ni código."
+                            }
+                        }
+                    } catch (exception: RepositoryException) {
+                        requestReady = false
+                        message = exception.userMessage
+                    }
+                    isLoading = false
                 }
-            } else {
-                requestReady = true
-                message = "Solicitud validada. El envío del código estará disponible cuando se conecte el servicio de recuperación."
             }
         }
         Text(
@@ -675,6 +766,3 @@ private fun AuthFooter() {
         )
     }
 }
-
-private fun String.isValidEmail(): Boolean =
-    android.util.Patterns.EMAIL_ADDRESS.matcher(trim()).matches()

@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.grupo2.sportconnect.ui.LoginScreen
 import com.grupo2.sportconnect.ui.RecoveryScreen
@@ -20,16 +21,33 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             SportConnectTheme {
+                val container = remember { SportConnectContainer.createDemo() }
                 var destination by rememberSaveable { mutableStateOf("explore") }
                 when (destination) {
                     "login" -> LoginScreen(
+                        demoCredentialsHint = container.demoCredentialsHint,
+                        onLogin = { email, password -> container.login(email, password) },
+                        onLoginSuccess = { destination = "explore" },
                         onRegister = { destination = "register" },
                         onRecoverPassword = { destination = "recovery" },
                         onExploreAsGuest = { destination = "explore" }
                     )
-                    "register" -> RegisterScreen(onBackToLogin = { destination = "login" })
-                    "recovery" -> RecoveryScreen(onBackToLogin = { destination = "login" })
-                    else -> ExploreScreen(onLoginClick = { destination = "login" })
+                    "register" -> RegisterScreen(
+                        onRegister = { registration -> container.registerAthlete(registration) },
+                        onBackToLogin = { destination = "login" }
+                    )
+                    "recovery" -> RecoveryScreen(
+                        onRequestRecovery = { request -> container.requestPasswordRecovery(request) },
+                        onBackToLogin = { destination = "login" }
+                    )
+                    else -> ExploreScreen(
+                        onLoginClick = { destination = "login" },
+                        getCourts = container.getCourts,
+                        getReservations = container.getReservations,
+                        searchCourts = container.searchCourts,
+                        isReservationAvailable = container.isReservationAvailable,
+                        requestReservation = container.requestReservation
+                    )
                 }
             }
         }
